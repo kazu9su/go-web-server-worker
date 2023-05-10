@@ -30,9 +30,11 @@ func main() {
 				case <-pulse:
 					sendPulse()
 				case str := <-que:
-					fmt.Printf("do a heavy work %s...\n", str)
-					time.Sleep(3 * time.Second)
-					fmt.Println("done!\n")
+					go func() {
+						fmt.Printf("do a heavy work %s...\n", str)
+						time.Sleep(3 * time.Second)
+						fmt.Println("done!\n")
+					}()
 				default:
 				}
 			}
