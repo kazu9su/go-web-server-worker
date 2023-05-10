@@ -35,6 +35,8 @@ func main() {
 					sendPulse()
 				case str := <-que:
 					go func() {
+						_, cancel := context.WithTimeout(ctx, 1*time.Second)
+						defer cancel()
 						fmt.Printf("do a heavy work %s...\n", str)
 						time.Sleep(3 * time.Second)
 						fmt.Println("done!")
@@ -104,7 +106,7 @@ func main() {
 
 	que := make(chan any)
 	ctx := context.TODO()
-	ctx, cancel := context.WithCancel(ctx)
+	// ctx, cancel := context.WithCancel(ctx)
 	doWorkWithObserver := newObserver(5*time.Second, doWork)
 
 	// time.AfterFunc(9*time.Second, func() {
