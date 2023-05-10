@@ -10,20 +10,24 @@ import (
 )
 
 func main() {
-	dowork := func(ctx context.Context, que <-chan any, pulseInterval time.Duration) <-chan any {
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
+	doWork := func(ctx context.Context, que <-chan any, pulseInterval time.Duration) <-chan any {
 		heartbeat := make(chan any)
 		go func() {
 			defer close(heartbeat)
+
 			pulse := time.Tick(pulseInterval)
 			sendPulse := func() {
 				select {
 				case heartbeat <- struct{}{}:
+				case <-ctx.Done():
+					return
 				default:
 				}
 			}
+
+			// fmt.Println("worker: Hello! I'm irresponsible")
+			// <-ctx.Done()
+			// fmt.Println("worker: I'm halting")
 
 			for {
 				select {
@@ -33,8 +37,10 @@ func main() {
 					go func() {
 						fmt.Printf("do a heavy work %s...\n", str)
 						time.Sleep(3 * time.Second)
-						fmt.Println("done!\n")
+						fmt.Println("done!")
 					}()
+				case <-ctx.Done():
+					return
 				default:
 				}
 			}
@@ -43,14 +49,78 @@ func main() {
 		return heartbeat
 	}
 
+	type startGoroutineFn func(
+		ctx context.Context,
+		que <-chan any,
+		pulseInterval time.Duration,
+	) (heartbeat <-chan any)
+	newObserver := func(timeout time.Duration, startGoroutine startGoroutineFn) startGoroutineFn {
+		return func(
+			ctx context.Context,
+			que <-chan any,
+			pulseInterval time.Duration,
+		) <-chan any {
+			heartbeat := make(chan any)
+			go func() {
+				defer close(heartbeat)
+
+				var workerHeartbeat <-chan any
+				var cancel func()
+				startWorker := func() {
+					_, cancel = context.WithCancel(ctx)
+					workerHeartbeat = startGoroutine(ctx, que, timeout/2)
+				}
+				startWorker()
+				pulse := time.Tick(pulseInterval)
+			monitorLoop:
+				for {
+					timeoutSignal := time.After(timeout)
+
+					for {
+						select {
+						case <-pulse:
+							select {
+							case heartbeat <- struct{}{}:
+							default:
+							}
+						case <-workerHeartbeat:
+							fmt.Println("worker: pulse")
+							continue monitorLoop
+						case <-timeoutSignal:
+							log.Println("observer: worker unhealthy; restarting...")
+							cancel()
+							startWorker()
+							continue monitorLoop
+						case <-ctx.Done():
+							return
+						}
+					}
+				}
+			}()
+
+			return heartbeat
+		}
+	}
+
 	que := make(chan any)
 	ctx := context.TODO()
-	heartbeat := dowork(ctx, que, 1*time.Second)
+	ctx, cancel := context.WithCancel(ctx)
+	doWorkWithObserver := newObserver(5*time.Second, doWork)
+
+	// time.AfterFunc(9*time.Second, func() {
+	// 	log.Println("main: halting observer and worker")
+	// 	cancel()
+	// })
+
+	heartbeat := doWorkWithObserver(ctx, que, 1*time.Second)
+
 	go func() {
 		for {
 			select {
 			case <-heartbeat:
-				fmt.Println("pulse")
+				fmt.Println("observer: pulse")
+			case <-ctx.Done():
+				log.Fatal("application is unhealthy!")
 			}
 		}
 	}()
